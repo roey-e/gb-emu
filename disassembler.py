@@ -1,0 +1,295 @@
+"""Disassembler for GB.
+
+This disassembler is inspired by Ghidra's SLEIGH language.
+"""
+
+import enum
+
+
+class Register(enum.Enum):
+    """Register enumeration."""
+
+    A = 'A'
+    F = 'F'
+    B = 'B'
+    C = 'C'
+    D = 'D'
+    E = 'E'
+    H = 'H'
+    L = 'L'
+    AF = 'AF'
+    BC = 'BC'
+    DE = 'DE'
+    HL = 'HL'
+    SP = 'SP'
+    PC = 'PC'
+
+
+class Token:
+    """An opcode field token."""
+
+    def __init__(self, name, start, stop):
+        """
+
+        Args:
+            start (int): The first first bit of the range.
+            stop (int): The last bit of the range.
+        """
+
+        self._name = name
+        self._start = start
+        self._stop = stop
+
+    @property
+    def name(self):
+        """str: Token's name."""
+
+        return self._name
+
+    @property
+    def start(self):
+        """int: The first bit of the token."""
+
+        return self._start
+
+    @property
+    def stop(self):
+        """int: The last bit of the token."""
+
+        return self._stop
+
+    def __str__(self):
+        return f'{self.name}{(self.start, self.stop)}'
+
+    def extract(self, buffer):
+        """Extracts the token value out of a given buffer.
+
+        Args:
+            buffer (bytes): An input buffer
+
+        Returns:
+            int: The parsed value.
+        """
+
+        mask = (2 ** (self.stop + 1)) - 1
+        value = (ord(buffer) & mask) >> self.start
+
+        return value
+
+
+TOKENS = {
+    'op0_8': Token('op0_8', 0, 7),
+    'op6_2': Token('op6_2', 6, 7),
+    'dRegPair4_2': Token('dRegPair4_2', 4, 5),
+    'sRegPair4_2': Token('sRegPair4_2', 4, 5),
+    'qRegPair4_2': Token('qRegPair4_2', 4, 5),
+    'reg3_3': Token('reg3_3', 3, 5),
+    'bits3_3': Token('bits3_3', 3, 5),
+    'bits0_4': Token('bits0_4', 0, 3),
+    'reg0_3': Token('reg0_3', 0, 2),
+    'bits0_3': Token('bits0_3', 0, 2),
+}
+
+
+class Rule:
+    """Instruction rule."""
+
+    def __init__(self, token, arg_name=None, test=None, transform=None):
+        """
+
+        Args:
+            token (Token): The token the rule is about.
+            arg_name (str): The argument name to export to.
+            test (function): The test function.
+            transform (function): The transformation function.
+        """
+
+        self._token = token
+        self._arg_name = arg_name
+        self._test = test if test else lambda value: True
+        self._transform = transform if transform else lambda value: value
+
+    @property
+    def token(self):
+        """Token: The token the rule is about."""
+
+        return self._token
+
+    @property
+    def arg_name(self):
+        """str: The argument name to export to."""
+
+        return self._arg_name if self._arg_name else self.token.name
+
+    def test(self, buffer):
+        """Tests the input by extracting the token and applying the test function.
+
+        Args:
+            buffer (bytes): An input buffer.
+
+        Returns:
+            bool: True if passes, False otherwise.
+        """
+
+        value = self.token.extract(buffer)
+        return self._test(value)
+
+    def apply(self, buffer):
+        """Applies the rule on a given buffer.
+
+        Args:
+            buffer (bytes): An input buffer.
+
+        Returns:
+            tuple: An argument-value pair.
+        """
+
+        if self.test(buffer):
+            t = self._transform(self.token.extract(buffer))
+            return self.arg_name, t
+        else:
+            return None
+
+
+class Match(Rule):
+    """Instruction match rule."""
+
+    def __init__(self, token, matched_value):
+        """
+
+        Args:
+            token (Token): The token the rule is about.
+            matched_value (int): The value to match the token.
+        """
+
+        def match(val):
+            return val == matched_value
+
+        super().__init__(token, test=match)
+
+
+class Attachment(Rule):
+    """Instruction attachment rule."""
+
+    ATTACHMENTS = {
+        'reg0_3': [Register.B, Register.C, Register.D, Register.E, Register.H, Register.L, None,
+                   Register.A],
+        'reg3_3': [Register.B, Register.C, Register.D, Register.E, Register.H, Register.L, None,
+                   Register.A],
+        'sRegPair4_2': [Register.BC, Register.DE, Register.HL, Register.SP],
+        'dRegPair4_2': [Register.BC, Register.DE, Register.HL, Register.SP],
+        'qRegPair4_2': [Register.BC, Register.DE, Register.HL, Register.AF],
+    }
+
+    def __init__(self, token, arg_name):
+        """
+
+        Args:
+            token (Token): The token the rule is about.
+            arg_name (str): The argument name to export to.
+        """
+
+        def pre_transform(val):
+            return type(self).ATTACHMENTS[token.name][val]
+
+        def test(val):
+            return pre_transform(val) is not None
+
+        def transform(val):
+            return pre_transform(val).name
+
+        super().__init__(token, arg_name, test, transform)
+
+
+class Instruction:
+    """Instruction"""
+
+    def __init__(self, format_string, args):
+        """
+
+        Args:
+            format_string (str): Instruction format string.
+            args (dict): Argument dict.
+        """
+
+        self._format = format_string
+        self._args = args
+
+    @property
+    def mnem(self):
+        """str: Mnemonic."""
+
+        return self._format.split()[0]
+
+    @property
+    def args(self):
+        """dict: Instruction's arguments."""
+
+        return self._args
+
+    def __str__(self):
+        return self._format.format(**self.args)
+
+
+class Recipe:
+    """Instruction Recipe."""
+
+    def __init__(self, format_string, rules):
+        """
+
+        Args:
+            format_string (str): Instruction format string.
+            rules (list[Rule]): List of rules.
+        """
+
+        self._format = format_string
+        self._rules = rules
+        self._args = {}
+
+    @property
+    def mnem(self):
+        """str: Mnemonic."""
+
+        return self._format.split()[0]
+
+    @property
+    def rules(self):
+        """list[Rule]: Rules list."""
+
+        return self._rules
+
+    def test(self, buffer):
+        """Tests the buffer against the recipe.
+
+        Args:
+            buffer (bytes): An input buffer
+
+        Returns:
+            bool: True if all the rules pass, False otherwise.
+        """
+
+        return all(rule.test(buffer) for rule in self.rules)
+
+    def parse(self, buffer):
+        """Parses the buffer to produce an instruction.
+
+        Args:
+            buffer (bytes): An input buffer
+
+        Returns:
+            Instruction: Resulted instruction.
+        """
+
+        if self.test(buffer):
+            return Instruction(self._format, dict(rule.apply(buffer) for rule in self.rules))
+
+
+if __name__ == '__main__':
+    ld_recipe = Recipe('LD {dst},{src}', [Match(TOKENS['op6_2'], 0x1),
+                                          Attachment(TOKENS['reg3_3'], 'dst'),
+                                          Attachment(TOKENS['reg0_3'], 'src')])
+    print(ld_recipe.test(b'\x40'))
+    print(ld_recipe.test(b'\x78'))
+    print(ld_recipe.test(b'\x46'))
+    print(ld_recipe.test(b'\x06'))
+    print(ld_recipe.parse(b'\x53'))
