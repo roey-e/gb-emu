@@ -6,23 +6,23 @@ This disassembler is inspired by Ghidra's SLEIGH language.
 import enum
 
 
-class Register(enum.Enum):
+class Register(enum.IntEnum):
     """Register enumeration."""
 
-    A = 'A'
-    F = 'F'
-    B = 'B'
-    C = 'C'
-    D = 'D'
-    E = 'E'
-    H = 'H'
-    L = 'L'
-    AF = 'AF'
-    BC = 'BC'
-    DE = 'DE'
-    HL = 'HL'
-    SP = 'SP'
-    PC = 'PC'
+    A = 0
+    F = 1
+    B = 2
+    C = 3
+    D = 4
+    E = 5
+    H = 6
+    L = 7
+    AF = 8
+    BC = 9
+    DE = 10
+    HL = 11
+    SP = 12
+    PC = 13
 
 
 class Token:
@@ -72,7 +72,7 @@ class Token:
         """
 
         mask = (2 ** (self.stop + 1)) - 1
-        value = (ord(buffer) & mask) >> self.start
+        value = (buffer[0] & mask) >> self.start
 
         return value
 
@@ -94,20 +94,16 @@ TOKENS = {
 class Rule:
     """Instruction rule."""
 
-    def __init__(self, token, arg_name=None, test=None, transform=None):
+    def __init__(self, token, arg_name=None):
         """
 
         Args:
             token (Token): The token the rule is about.
             arg_name (str): The argument name to export to.
-            test (function): The test function.
-            transform (function): The transformation function.
         """
 
         self._token = token
         self._arg_name = arg_name
-        self._test = test if test else lambda value: True
-        self._transform = transform if transform else lambda value: value
 
     @property
     def token(self):
@@ -120,6 +116,30 @@ class Rule:
         """str: The argument name to export to."""
 
         return self._arg_name if self._arg_name else self.token.name
+
+    def _test(self, value):
+        """Test for token's extracted value.
+
+        Args:
+            value (int): The extracted value.
+
+        Returns:
+            bool: True If the extracted token passes the test.
+        """
+
+        raise NotImplementedError
+
+    def _transform(self, value):
+        """The extracted token transformation.
+
+        Args:
+            value (int): The extracted value.
+
+        Returns:
+            int: The transformed value.
+        """
+
+        return value
 
     def test(self, buffer):
         """Tests the input by extracting the token and applying the test function.
@@ -141,14 +161,12 @@ class Rule:
             buffer (bytes): An input buffer.
 
         Returns:
-            tuple: An argument-value pair.
+            (str, int): An argument-value pair.
         """
 
-        if self.test(buffer):
-            t = self._transform(self.token.extract(buffer))
-            return self.arg_name, t
-        else:
-            return None
+        if not self.test(buffer):
+            raise ValueError('The rule doesn\'t apply.')
+        return self.arg_name, self._transform(self.token.extract(buffer))
 
 
 class Match(Rule):
@@ -162,23 +180,31 @@ class Match(Rule):
             matched_value (int): The value to match the token.
         """
 
-        def match(val):
-            return val == matched_value
+        self._matched_value = matched_value
 
-        super().__init__(token, test=match)
+        super().__init__(token)
+
+    @property
+    def matched_value(self):
+        """int: The value to match the token."""
+
+        return self._matched_value
+
+    def _test(self, value):
+        return value == self.matched_value
 
 
 class Attachment(Rule):
     """Instruction attachment rule."""
 
     ATTACHMENTS = {
-        'reg0_3': [Register.B, Register.C, Register.D, Register.E, Register.H, Register.L, None,
-                   Register.A],
-        'reg3_3': [Register.B, Register.C, Register.D, Register.E, Register.H, Register.L, None,
-                   Register.A],
-        'sRegPair4_2': [Register.BC, Register.DE, Register.HL, Register.SP],
-        'dRegPair4_2': [Register.BC, Register.DE, Register.HL, Register.SP],
-        'qRegPair4_2': [Register.BC, Register.DE, Register.HL, Register.AF],
+        'reg0_3': {0: Register.B, 1: Register.C, 2: Register.D, 3: Register.E, 4: Register.H,
+                   5: Register.L, 7: Register.A},
+        'reg3_3': {0: Register.B, 1: Register.C, 2: Register.D, 3: Register.E, 4: Register.H,
+                   5: Register.L, 7: Register.A},
+        'sRegPair4_2': {0: Register.BC, 1: Register.DE, 2: Register.HL, 3: Register.SP},
+        'dRegPair4_2': {0: Register.BC, 1: Register.DE, 2: Register.HL, 3: Register.SP},
+        'qRegPair4_2': {0: Register.BC, 1: Register.DE, 2: Register.HL, 3: Register.AF},
     }
 
     def __init__(self, token, arg_name):
@@ -189,16 +215,25 @@ class Attachment(Rule):
             arg_name (str): The argument name to export to.
         """
 
-        def pre_transform(val):
-            return type(self).ATTACHMENTS[token.name][val]
+        super().__init__(token, arg_name)
 
-        def test(val):
-            return pre_transform(val) is not None
+    def _test(self, value):
+        try:
+            return bool(self._transform(value))
+        except KeyError:
+            return False
 
-        def transform(val):
-            return pre_transform(val).name
+    def _transform(self, value):
+        """Token transformation into register.
 
-        super().__init__(token, arg_name, test, transform)
+        Args:
+            value (int): The extracted value.
+
+        Returns:
+            Register: The register.
+        """
+
+        return type(self).ATTACHMENTS[self.token.name][value]
 
 
 class Instruction:
