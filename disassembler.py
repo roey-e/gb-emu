@@ -6,6 +6,18 @@ This disassembler is inspired by Ghidra's SLEIGH language.
 import enum
 
 
+class DisassemblerError(Exception):
+    """Base disassembler error type."""
+
+    pass
+
+
+class ShortInputError(DisassemblerError):
+    """Input buffer is short."""
+
+    pass
+
+
 class Register(enum.IntEnum):
     """Register enumeration."""
 
@@ -28,17 +40,18 @@ class Register(enum.IntEnum):
 class Token:
     """An opcode field token."""
 
-    def __init__(self, name, start, stop):
+    def __init__(self, name, start, end, signed=False):
         """
 
         Args:
             start (int): The first first bit of the range.
-            stop (int): The last bit of the range.
+            end (int): The last bit of the range.
         """
 
         self._name = name
         self._start = start
-        self._stop = stop
+        self._end = end
+        self._signed = signed
 
     @property
     def name(self):
@@ -53,26 +66,60 @@ class Token:
         return self._start
 
     @property
-    def stop(self):
+    def end(self):
         """int: The last bit of the token."""
 
-        return self._stop
+        return self._end
+
+    @property
+    def signed(self):
+        """bool: True for signed, False for unsigned."""
+
+        return self._signed
 
     def __str__(self):
-        return f'{self.name}{(self.start, self.stop)}'
+        return f'{self.name}{(self.start, self.end)}'
+
+    def _read_buffer(self, buffer):
+        """Reads the buffer in little-endian manner.
+
+        Args:
+            buffer (bytes):  An input buffer.
+
+        Returns:
+            int: The unsigned integer representing the buffer.
+        """
+
+        bytes_number = self.end // 8 + 1
+
+        if len(buffer) < bytes_number:
+            raise ShortInputError(
+                f'Got {len(buffer)} byte sized buffer, '
+                f'{bytes_number} bytes buffer is required for extracting {self} token.')
+
+        value = 0
+        for index, byte in enumerate(buffer[:bytes_number]):
+            value |= byte << (index * 8)
+
+        return value
 
     def extract(self, buffer):
         """Extracts the token value out of a given buffer.
 
         Args:
-            buffer (bytes): An input buffer
+            buffer (bytes): An input buffer.
 
         Returns:
             int: The parsed value.
         """
 
-        mask = (2 ** (self.stop + 1)) - 1
-        value = (buffer[0] & mask) >> self.start
+        mask = (2 ** (self.end + 1)) - 1
+        value = (self._read_buffer(buffer) & mask) >> self.start
+
+        if self.signed:
+            bits = self.end - self.start + 1
+            if value & (0b1 << (bits - 1)):
+                value -= (0b1 << bits)
 
         return value
 
