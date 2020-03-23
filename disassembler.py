@@ -349,7 +349,7 @@ class Recipe:
         """Tests the buffer against the recipe.
 
         Args:
-            buffer (bytes): An input buffer
+            buffer (bytes): An input buffer.
 
         Returns:
             bool: True if all the rules pass, False otherwise.
@@ -361,7 +361,7 @@ class Recipe:
         """Parses the buffer to produce an instruction.
 
         Args:
-            buffer (bytes): An input buffer
+            buffer (bytes): An input buffer.
 
         Returns:
             Instruction: Resulted instruction.
