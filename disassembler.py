@@ -18,6 +18,12 @@ class ShortInputError(DisassemblerError):
     pass
 
 
+class RuleError(DisassemblerError):
+    """The rule doesn't apply."""
+
+    pass
+
+
 class Register(enum.IntEnum):
     """Register enumeration."""
 
@@ -167,6 +173,9 @@ class Rule:
 
         return self._arg_name if self._arg_name else self.token.name
 
+    def __str__(self):
+        raise NotImplementedError
+
     def _test(self, value):
         """Test for token's extracted value.
 
@@ -212,10 +221,13 @@ class Rule:
 
         Returns:
             (str, int): An argument-value pair.
+
+        Raises:
+            RuleError: When the rule doesn't apply.
         """
 
         if not self.test(buffer):
-            raise ValueError('The rule doesn\'t apply.')
+            raise RuleError(f'The rule {self} doesn\'t apply on \'{buffer.hex()}\'.')
         return self.arg_name, self._transform(self.token.extract(buffer))
 
 
@@ -239,6 +251,9 @@ class Match(Rule):
         """int: The value to match the token."""
 
         return self._matched_value
+
+    def __str__(self):
+        return f'"{self.token} is {self.matched_value}"'
 
     def _test(self, value):
         return value == self.matched_value
@@ -266,6 +281,9 @@ class Attachment(Rule):
         """
 
         super().__init__(token, arg_name)
+
+    def __str__(self):
+        return f'"{self.token} register attachment"'
 
     def _test(self, value):
         try:
@@ -365,10 +383,13 @@ class Recipe:
 
         Returns:
             Instruction: Resulted instruction.
+
+        Raises:
+            RuleError: When one of the Rules doesn't apply.
         """
 
-        if self.test(buffer):
-            return Instruction(self._format, dict(rule.apply(buffer) for rule in self.rules))
+        args = dict(rule.apply(buffer) for rule in self.rules)
+        return Instruction(self._format, args)
 
 
 if __name__ == '__main__':
