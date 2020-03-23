@@ -36,6 +36,9 @@ class Register(enum.IntEnum):
     SP = 12
     PC = 13
 
+    def __str__(self):
+        return self.name
+
 
 class Token:
     """An opcode field token."""
@@ -310,7 +313,9 @@ class Instruction:
         return self._args
 
     def __str__(self):
-        return self._format.format(**self.args)
+        # format() doesn't use __str__ of Register.
+        args = {k: str(v) for k, v in self.args.items()}
+        return self._format.format(**args)
 
 
 class Recipe:
