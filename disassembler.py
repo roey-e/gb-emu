@@ -12,7 +12,7 @@ class DisassemblerError(Exception):
     pass
 
 
-class ShortInputError(DisassemblerError):
+class ShortTokenInputError(DisassemblerError):
     """Input buffer is short."""
 
     pass
@@ -20,6 +20,12 @@ class ShortInputError(DisassemblerError):
 
 class RuleError(DisassemblerError):
     """The rule doesn't apply."""
+
+    pass
+
+
+class CutOffOpcodeError(DisassemblerError):
+    """The opcode is cut."""
 
     pass
 
@@ -103,7 +109,7 @@ class Token:
         bytes_number = self.end // 8 + 1
 
         if len(buffer) < bytes_number:
-            raise ShortInputError(
+            raise ShortTokenInputError(
                 f'Got {len(buffer)} byte sized buffer, '
                 f'{bytes_number} bytes buffer is required for extracting {self} token.')
 
@@ -145,6 +151,10 @@ TOKENS = {
     'bits0_4': Token('bits0_4', 0, 3),
     'reg0_3': Token('reg0_3', 0, 2),
     'bits0_3': Token('bits0_3', 0, 2),
+    'imm8': Token('imm8', 0, 7),
+    'sign8': Token('sign8', 7, 7),
+    'simm8': Token('simm8', 0, 7, signed=True),
+    'imm16': Token('imm16', 0, 15),
 }
 
 
@@ -305,6 +315,16 @@ class Attachment(Rule):
         return type(self).ATTACHMENTS[self.token.name][value]
 
 
+class Immediate(Rule):
+    """Immediate extraction rule."""
+
+    def __str__(self):
+        return f'"{self.token} immediate extraction"'
+
+    def _test(self, value):
+        return True
+
+
 class Instruction:
     """Instruction"""
 
@@ -337,38 +357,29 @@ class Instruction:
         return self._format.format(**args)
 
 
-class Recipe:
-    """Instruction Recipe."""
+class ByteRecipe:
+    """Opcode's byte rules."""
 
-    def __init__(self, format_string, rules):
+    def __init__(self, rules):
         """
 
         Args:
-            format_string (str): Instruction format string.
             rules (list[Rule]): List of rules.
         """
 
-        self._format = format_string
         self._rules = rules
-        self._args = {}
-
-    @property
-    def mnem(self):
-        """str: Mnemonic."""
-
-        return self._format.split()[0]
 
     @property
     def rules(self):
         """list[Rule]: Rules list."""
 
-        return self._rules
+        return list(self._rules)
 
     def test(self, buffer):
-        """Tests the buffer against the recipe.
+        """Tests the buffer against the rules.
 
         Args:
-            buffer (bytes): An input buffer.
+            buffer (bytes): Input buffer.
 
         Returns:
             bool: True if all the rules pass, False otherwise.
@@ -377,20 +388,109 @@ class Recipe:
         return all(rule.test(buffer) for rule in self.rules)
 
     def parse(self, buffer):
+        """Applies the rules on the buffer to produce arguments.
+
+        Args:
+            buffer (bytes): Input buffer.
+
+        Returns:
+            dict: A dictionary that maps argument names (str) to values (int).
+
+        Raises:
+            RuleError: When one of the Rules doesn't apply.
+        """
+
+        return dict(rule.apply(buffer) for rule in self.rules)
+
+
+class Recipe:
+    """Instruction Recipe."""
+
+    def __init__(self, format_string, rules, *args):
+        """
+
+        Args:
+            format_string (str): Instruction format string.
+            rules (list[Rule]): List of rules.
+            *args: Rules for additional bytes.
+        """
+
+        self._format = format_string
+        self._byte_recipes = [ByteRecipe(rules_list) for rules_list in [rules] + list(args)]
+
+    @property
+    def format(self):
+        """str: Mnemonic format."""
+
+        return self._format
+
+    @property
+    def byte_recipes(self):
+        """list[ByteRecipe]: list of byte recipes."""
+
+        return list(self._byte_recipes)
+
+    @property
+    def size(self):
+        """int: Opcode size in bytes."""
+
+        return len(self.byte_recipes)
+
+    def __str__(self):
+        return f'Recipe("{self.format}")'
+
+    def test(self, buffer):
+        """Tests the buffer against the byte recipes.
+
+        Args:
+            buffer (bytes): Input buffer.
+
+        Returns:
+            bool: True if all the byte recipes pass, False otherwise.
+
+        Raises:
+            CutOffOpcodeError: When the buffer is smaller than expected and passes successfully
+                some of the byte recipes' tests.
+        """
+
+        if len(buffer) < 1:
+            raise ValueError('Empty buffer')
+
+        tests = [byte_recipe.test(buffer[byte:self.size]) for byte, byte_recipe in
+                 enumerate(self.byte_recipes) if byte < len(buffer)]
+
+        if len(buffer) < self.size and any(tests):
+            raise CutOffOpcodeError(f'The opcode \'{buffer.hex()}\' is cut as tested by {self}.')
+
+        return all(tests)
+
+    def parse(self, buffer):
         """Parses the buffer to produce an instruction.
 
         Args:
-            buffer (bytes): An input buffer.
+            buffer (bytes): Input buffer.
 
         Returns:
             Instruction: Resulted instruction.
 
         Raises:
             RuleError: When one of the Rules doesn't apply.
+            CutOffOpcodeError: When the buffer is smaller than expected and parses successfully
+                by some of the byte recipes.
         """
 
-        args = dict(rule.apply(buffer) for rule in self.rules)
-        return Instruction(self._format, args)
+        if len(buffer) < 1:
+            raise ValueError('Empty buffer')
+
+        args = dict()
+        for byte, byte_recipe in enumerate(self.byte_recipes):
+            if byte < len(buffer):
+                args.update(byte_recipe.parse(buffer[byte:self.size]))
+
+        if len(buffer) < self.size and args:
+            raise CutOffOpcodeError(f'The opcode \'{buffer.hex()}\' is cut as tested by {self}.')
+
+        return Instruction(self.format, args)
 
 
 if __name__ == '__main__':
@@ -402,3 +502,13 @@ if __name__ == '__main__':
     print(ld_recipe.test(b'\x46'))
     print(ld_recipe.test(b'\x06'))
     print(ld_recipe.parse(b'\x53'))
+
+    two_byte_ld_recipe = Recipe('LD {dst},{imm}', [Match(TOKENS['op6_2'], 0x0),
+                                                   Attachment(TOKENS['reg3_3'], 'dst'),
+                                                   Match(TOKENS['bits0_3'], 0x6)],
+                                [Immediate(TOKENS['imm8'], 'imm')])
+    print(two_byte_ld_recipe.parse(b'\x06\x45'))
+    try:
+        print(two_byte_ld_recipe.parse(b'\x06'))
+    except CutOffOpcodeError as e:
+        print(e)
