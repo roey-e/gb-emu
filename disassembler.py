@@ -55,6 +55,7 @@ class Token:
         Args:
             start (int): The first first bit of the range.
             end (int): The last bit of the range.
+            signed (bool): Whether the token should be interpreted as signed.
         """
 
         self._name = name
