@@ -328,28 +328,38 @@ class Immediate(Rule):
 class Instruction:
     """Instruction"""
 
-    def __init__(self, format_string, args):
+    def __init__(self, format_string, args, size, duration):
         """
 
         Args:
             format_string (str): Instruction format string.
             args (dict): Argument dict.
+            size (int): The instruction size in bytes.
+            duration (int): The instruction duration in cycles.
         """
 
         self._format = format_string
         self._args = args
-
-    @property
-    def mnem(self):
-        """str: Mnemonic."""
-
-        return self._format.split()[0]
+        self._size = size
+        self._duration = duration
 
     @property
     def args(self):
         """dict: Instruction's arguments."""
 
         return self._args
+
+    @property
+    def size(self):
+        """int: The instruction size in bytes."""
+
+        return self._size
+
+    @property
+    def duration(self):
+        """int: The instruction duration in cycles."""
+
+        return self._duration
 
     def __str__(self):
         # format() doesn't use __str__ of Register.
@@ -406,16 +416,18 @@ class ByteRecipe:
 class Recipe:
     """Instruction Recipe."""
 
-    def __init__(self, format_string, rules, *args):
+    def __init__(self, format_string, duration, rules, *args):
         """
 
         Args:
             format_string (str): Instruction format string.
+            duration (int): The instruction duration in cycles.
             rules (list[Rule]): List of rules.
             *args: Rules for additional bytes.
         """
 
         self._format = format_string
+        self._duration = duration
         self._byte_recipes = [ByteRecipe(rules_list) for rules_list in [rules] + list(args)]
 
     @property
@@ -423,6 +435,12 @@ class Recipe:
         """str: Mnemonic format."""
 
         return self._format
+
+    @property
+    def duration(self):
+        """int: The instruction duration in cycles."""
+
+        return self._duration
 
     @property
     def byte_recipes(self):
@@ -490,24 +508,25 @@ class Recipe:
         if len(buffer) < self.size and args:
             raise CutOffOpcodeError(f'The opcode \'{buffer.hex()}\' is cut as tested by {self}.')
 
-        return Instruction(self.format, args)
+        return Instruction(self.format, args, self.size, self.duration)
 
 
 if __name__ == '__main__':
-    ld_recipe = Recipe('LD {dst},{src}', [Match(TOKENS['op6_2'], 0x1),
-                                          Attachment(TOKENS['reg3_3'], 'dst'),
-                                          Attachment(TOKENS['reg0_3'], 'src')])
+    ld_recipe = Recipe('LD {dst},{src}', 4, [Match(TOKENS['op6_2'], 0x1),
+                                             Attachment(TOKENS['reg3_3'], 'dst'),
+                                             Attachment(TOKENS['reg0_3'], 'src')])
     print(ld_recipe.test(b'\x40'))
     print(ld_recipe.test(b'\x78'))
     print(ld_recipe.test(b'\x46'))
     print(ld_recipe.test(b'\x06'))
     print(ld_recipe.parse(b'\x53'))
 
-    two_byte_ld_recipe = Recipe('LD {dst},{imm}', [Match(TOKENS['op6_2'], 0x0),
-                                                   Attachment(TOKENS['reg3_3'], 'dst'),
-                                                   Match(TOKENS['bits0_3'], 0x6)],
+    two_byte_ld_recipe = Recipe('LD {dst},{imm}', 8, [Match(TOKENS['op6_2'], 0x0),
+                                                      Attachment(TOKENS['reg3_3'], 'dst'),
+                                                      Match(TOKENS['bits0_3'], 0x6)],
                                 [Immediate(TOKENS['imm8'], 'imm')])
-    print(two_byte_ld_recipe.parse(b'\x06\x45'))
+    instruction = two_byte_ld_recipe.parse(b'\x06\x45')
+    print(f'{instruction}, size:{instruction.size} bytes, duration: {instruction.duration} cycles')
     try:
         print(two_byte_ld_recipe.parse(b'\x06'))
     except CutOffOpcodeError as e:
