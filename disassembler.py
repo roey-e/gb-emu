@@ -3,6 +3,7 @@
 This disassembler is inspired by Ghidra's SLEIGH language.
 """
 
+from collections import OrderedDict
 import enum
 
 
@@ -366,6 +367,9 @@ class Instruction:
         args = {k: str(v) for k, v in self.args.items()}
         return self._format.format(**args)
 
+    def __repr__(self):
+        return f'Instruction("{str(self)}")'
+
 
 class ByteRecipe:
     """Opcode's byte rules."""
@@ -511,6 +515,90 @@ class Recipe:
         return Instruction(self.format, args, self.size, self.duration)
 
 
+class Disassembler:
+    """GB Disassembler."""
+
+    COOKBOOK = [
+        Recipe('LD {dst},{src}', 4, [Match(TOKENS['op6_2'], 0x1),
+                                     Attachment(TOKENS['reg3_3'], 'dst'),
+                                     Attachment(TOKENS['reg0_3'], 'src')]),
+        Recipe('LD {dst},{imm}', 8, [Match(TOKENS['op6_2'], 0x0),
+                                     Attachment(TOKENS['reg3_3'], 'dst'),
+                                     Match(TOKENS['bits0_3'], 0x6)],
+               [Immediate(TOKENS['imm8'], 'imm')])
+    ]
+
+    def disassemble_one(self, buffer):
+        """Disassembles one instruction out of the buffer.
+
+        Args:
+            buffer (bytes): Input buffer.
+
+        Returns:
+            Instruction: Disassembled instruction.
+        """
+
+        correct_recipe = next(recipe for recipe in type(self).COOKBOOK if recipe.test(buffer))
+        return correct_recipe.parse(buffer)
+
+    def _whole_buffer_disassembly(self, buffer, address_offset=0):
+        """Disassembly generator that goes all over the buffer including a possible cut opcode.
+
+        Args:
+            buffer (bytes): Input buffer.
+            address_offset (int): The relative offset of the given buffer.
+
+        Yields:
+            (int, Instruction): An offset and the disassembled instruction.
+        """
+
+        offset = address_offset
+        while buffer:
+            try:
+                instruction = self.disassemble_one(buffer)
+            except CutOffOpcodeError:
+                yield offset, None
+                return
+            yield offset, instruction
+            buffer = buffer[instruction.size:]
+            offset += instruction.size
+
+    def disassembly(self, buffer, address_offset=0):
+        """Disassembly generator that goes over the buffer.
+
+        Args:
+            buffer (bytes): Input buffer.
+            address_offset (int): The relative offset of the given buffer.
+
+        Yields:
+            (int, Instruction): An offset and the disassembled instruction.
+        """
+
+        whole_buffer_disassembly = self._whole_buffer_disassembly(buffer, address_offset)
+        while True:
+            try:
+                offset, instruction = next(whole_buffer_disassembly)
+            except StopIteration:
+                return
+            else:
+                if not instruction:
+                    return
+            yield offset, instruction
+
+    def disassemble(self, buffer, address_offset=0):
+        """Disassembles a buffer.
+
+        Args:
+            buffer (bytes): Input buffer.
+            address_offset (int): The relative offset of the given buffer.
+
+        Returns:
+            OrderedDict: An ordered dict that maps addresses to instructions.
+        """
+
+        return OrderedDict(self._whole_buffer_disassembly(buffer, address_offset))
+
+
 if __name__ == '__main__':
     ld_recipe = Recipe('LD {dst},{src}', 4, [Match(TOKENS['op6_2'], 0x1),
                                              Attachment(TOKENS['reg3_3'], 'dst'),
@@ -531,3 +619,12 @@ if __name__ == '__main__':
         print(two_byte_ld_recipe.parse(b'\x06'))
     except CutOffOpcodeError as e:
         print(e)
+
+    dis = Disassembler()
+
+    print(dis.disassemble_one(b'\x53'))
+    print(dis.disassemble_one(b'\x06\x45'))
+    print(list(dis.disassembly(b'\x06\x45\x53')))
+    print(dis.disassemble(b'\x06\x45\x53', 10))
+    print(list(dis.disassembly(b'\x06\x45\x53\x06')))
+    print(dis.disassemble(b'\x06\x45\x53\x06', 10))
