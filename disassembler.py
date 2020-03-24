@@ -10,53 +10,36 @@ import enum
 class DisassemblerError(Exception):
     """Base disassembler error type."""
 
-    pass
-
 
 class ShortTokenInputError(DisassemblerError):
     """Input buffer is short."""
-
-    pass
 
 
 class RuleError(DisassemblerError):
     """The rule doesn't apply."""
 
-    pass
-
 
 class CutOffOpcodeError(DisassemblerError):
     """The opcode is cut."""
-
-    pass
 
 
 class Register(enum.IntEnum):
     """Register enumeration."""
 
-    A = 0
-    F = 1
-    B = 2
-    C = 3
-    D = 4
-    E = 5
-    H = 6
-    L = 7
-    AF = 8
-    BC = 9
-    DE = 10
-    HL = 11
-    SP = 12
-    PC = 13
-
     def __str__(self):
         return self.name
 
+    def __repr__(self):
+        return f'Register({self})'
 
-class Token:
-    """An opcode field token."""
 
-    def __init__(self, name, start, end, signed=False):
+class Token(enum.Enum):
+    """An opcode field token with enum capability.
+
+    Suited for little-endian machines.
+    """
+
+    def __init__(self, start, end, signed=False):
         """
 
         Args:
@@ -65,16 +48,9 @@ class Token:
             signed (bool): Whether the token should be interpreted as signed.
         """
 
-        self._name = name
         self._start = start
         self._end = end
         self._signed = signed
-
-    @property
-    def name(self):
-        """str: Token's name."""
-
-        return self._name
 
     @property
     def start(self):
@@ -95,7 +71,11 @@ class Token:
         return self._signed
 
     def __str__(self):
-        return f'{self.name}{(self.start, self.end)}'
+        return self.name
+
+    def __repr__(self):
+        signed_string = ', signed' if self.signed else ''
+        return f'{self}({self.start}, {self.end}{signed_string})'
 
     def _read_buffer(self, buffer):
         """Reads the buffer in little-endian manner.
@@ -139,24 +119,6 @@ class Token:
                 value -= (0b1 << bits)
 
         return value
-
-
-TOKENS = {
-    'op0_8': Token('op0_8', 0, 7),
-    'op6_2': Token('op6_2', 6, 7),
-    'dRegPair4_2': Token('dRegPair4_2', 4, 5),
-    'sRegPair4_2': Token('sRegPair4_2', 4, 5),
-    'qRegPair4_2': Token('qRegPair4_2', 4, 5),
-    'reg3_3': Token('reg3_3', 3, 5),
-    'bits3_3': Token('bits3_3', 3, 5),
-    'bits0_4': Token('bits0_4', 0, 3),
-    'reg0_3': Token('reg0_3', 0, 2),
-    'bits0_3': Token('bits0_3', 0, 2),
-    'imm8': Token('imm8', 0, 7),
-    'sign8': Token('sign8', 7, 7),
-    'simm8': Token('simm8', 0, 7, signed=True),
-    'imm16': Token('imm16', 0, 15),
-}
 
 
 class Rule:
@@ -274,15 +236,7 @@ class Match(Rule):
 class Attachment(Rule):
     """Instruction attachment rule."""
 
-    ATTACHMENTS = {
-        'reg0_3': {0: Register.B, 1: Register.C, 2: Register.D, 3: Register.E, 4: Register.H,
-                   5: Register.L, 7: Register.A},
-        'reg3_3': {0: Register.B, 1: Register.C, 2: Register.D, 3: Register.E, 4: Register.H,
-                   5: Register.L, 7: Register.A},
-        'sRegPair4_2': {0: Register.BC, 1: Register.DE, 2: Register.HL, 3: Register.SP},
-        'dRegPair4_2': {0: Register.BC, 1: Register.DE, 2: Register.HL, 3: Register.SP},
-        'qRegPair4_2': {0: Register.BC, 1: Register.DE, 2: Register.HL, 3: Register.AF},
-    }
+    ATTACHMENTS = dict()
 
     def __init__(self, token, arg_name):
         """
@@ -310,10 +264,10 @@ class Attachment(Rule):
             value (int): The extracted value.
 
         Returns:
-            Register: The register.
+            GBRegister: The register.
         """
 
-        return type(self).ATTACHMENTS[self.token.name][value]
+        return type(self).ATTACHMENTS[self.token][value]
 
 
 class Immediate(Rule):
@@ -518,15 +472,12 @@ class Recipe:
 class Disassembler:
     """GB Disassembler."""
 
-    COOKBOOK = [
-        Recipe('LD {dst},{src}', 4, [Match(TOKENS['op6_2'], 0x1),
-                                     Attachment(TOKENS['reg3_3'], 'dst'),
-                                     Attachment(TOKENS['reg0_3'], 'src')]),
-        Recipe('LD {dst},{imm}', 8, [Match(TOKENS['op6_2'], 0x0),
-                                     Attachment(TOKENS['reg3_3'], 'dst'),
-                                     Match(TOKENS['bits0_3'], 0x6)],
-               [Immediate(TOKENS['imm8'], 'imm')])
-    ]
+    def __init__(self, cookbook):
+        self._cookbook = cookbook
+
+    @property
+    def cookbook(self):
+        return list(self._cookbook)
 
     def disassemble_one(self, buffer):
         """Disassembles one instruction out of the buffer.
@@ -538,7 +489,7 @@ class Disassembler:
             Instruction: Disassembled instruction.
         """
 
-        correct_recipe = next(recipe for recipe in type(self).COOKBOOK if recipe.test(buffer))
+        correct_recipe = next(recipe for recipe in self.cookbook if recipe.test(buffer))
         return correct_recipe.parse(buffer)
 
     def _whole_buffer_disassembly(self, buffer, address_offset=0):
@@ -591,34 +542,3 @@ class Disassembler:
         """
 
         return OrderedDict(self._whole_buffer_disassembly(buffer, address_offset))
-
-
-if __name__ == '__main__':
-    ld_recipe = Recipe('LD {dst},{src}', 4, [Match(TOKENS['op6_2'], 0x1),
-                                             Attachment(TOKENS['reg3_3'], 'dst'),
-                                             Attachment(TOKENS['reg0_3'], 'src')])
-    print(ld_recipe.test(b'\x40'))
-    print(ld_recipe.test(b'\x78'))
-    print(ld_recipe.test(b'\x46'))
-    print(ld_recipe.test(b'\x06'))
-    print(ld_recipe.parse(b'\x53'))
-
-    two_byte_ld_recipe = Recipe('LD {dst},{imm}', 8, [Match(TOKENS['op6_2'], 0x0),
-                                                      Attachment(TOKENS['reg3_3'], 'dst'),
-                                                      Match(TOKENS['bits0_3'], 0x6)],
-                                [Immediate(TOKENS['imm8'], 'imm')])
-    instruction = two_byte_ld_recipe.parse(b'\x06\x45')
-    print(f'{instruction}, size:{instruction.size} bytes, duration: {instruction.duration} cycles')
-    try:
-        print(two_byte_ld_recipe.parse(b'\x06'))
-    except CutOffOpcodeError as e:
-        print(e)
-
-    dis = Disassembler()
-
-    print(dis.disassemble_one(b'\x53'))
-    print(dis.disassemble_one(b'\x06\x45'))
-    print(list(dis.disassembly(b'\x06\x45\x53')))
-    print(dis.disassemble(b'\x06\x45\x53', 10))
-    print(list(dis.disassembly(b'\x06\x45\x53\x06')))
-    print(dis.disassemble(b'\x06\x45\x53\x06', 10))
