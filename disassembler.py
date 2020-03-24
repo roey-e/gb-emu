@@ -559,9 +559,10 @@ class Disassembler:
             except CutOffOpcodeError:
                 yield offset, None
                 return
-            yield offset, instruction
-            buffer = buffer[instruction.size:]
-            offset += instruction.size
+            else:
+                yield offset, instruction
+                buffer = buffer[instruction.size:]
+                offset += instruction.size
 
     def disassembly(self, buffer, address_offset=0):
         """Disassembly generator that goes over the buffer.
@@ -574,16 +575,9 @@ class Disassembler:
             (int, Instruction): An offset and the disassembled instruction.
         """
 
-        whole_buffer_disassembly = self._whole_buffer_disassembly(buffer, address_offset)
-        while True:
-            try:
-                offset, instruction = next(whole_buffer_disassembly)
-            except StopIteration:
-                return
-            else:
-                if not instruction:
-                    return
-            yield offset, instruction
+        for offset, instruction in self._whole_buffer_disassembly(buffer, address_offset):
+            if instruction:
+                yield offset, instruction
 
     def disassemble(self, buffer, address_offset=0):
         """Disassembles a buffer.
