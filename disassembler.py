@@ -284,6 +284,36 @@ class Immediate(Rule):
         return True
 
 
+class Statement(Rule):
+    """Register statement/export."""
+
+    def __init__(self, register, arg_name=None):
+        """
+
+        Args:
+            register (Register): Register to state/export.
+            arg_name (str): The argument name to export to.
+        """
+
+        self._register = register
+        super().__init__(Token(0, -1), arg_name if arg_name else register.name)
+
+    @property
+    def register(self):
+        """Register: The stated register."""
+        
+        return self._register
+
+    def __str__(self):
+        return f'"Register {self.register} statement"'
+
+    def _test(self, value):
+        return True
+
+    def _transform(self, value):
+        return self.register
+
+
 class Instruction:
     """Instruction"""
 
