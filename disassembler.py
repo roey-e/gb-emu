@@ -7,20 +7,24 @@ from collections import OrderedDict
 import enum
 
 
-class DisassemblerError(Exception):
+class DisassemblerBaseError(Exception):
     """Base disassembler error type."""
 
 
-class ShortTokenInputError(DisassemblerError):
+class ShortTokenInputError(DisassemblerBaseError):
     """Input buffer is short."""
 
 
-class RuleError(DisassemblerError):
+class RuleError(DisassemblerBaseError):
     """The rule doesn't apply."""
 
 
-class CutOffOpcodeError(DisassemblerError):
+class CutOffOpcodeError(DisassemblerBaseError):
     """The opcode is cut."""
+
+
+class DisassemblyError(DisassemblerBaseError):
+    """No disassembly for a given opcode."""
 
 
 class Register(enum.IntEnum):
@@ -487,9 +491,16 @@ class Disassembler:
 
         Returns:
             Instruction: Disassembled instruction.
+
+        Raises:
+            DisassemblyError: When there is no fitting recipe for the opcode.
         """
 
-        correct_recipe = next(recipe for recipe in self.cookbook if recipe.test(buffer))
+        try:
+            correct_recipe = next(recipe for recipe in self.cookbook if recipe.test(buffer))
+        except StopIteration:
+            raise DisassemblyError(
+                f'No recipe fits the opcode given in the buffer \'{buffer.hex()}\'.')
         return correct_recipe.parse(buffer)
 
     def _whole_buffer_disassembly(self, buffer, address_offset=0):
