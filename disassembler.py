@@ -296,12 +296,16 @@ class Statement(Rule):
         """
 
         self._register = register
-        super().__init__(Token(0, -1), arg_name if arg_name else register.name)
+
+        class NullToken(Token):
+            NULL_TOKEN = 0, -1
+
+        super().__init__(NullToken.NULL_TOKEN, arg_name if arg_name else register.name)
 
     @property
     def register(self):
         """Register: The stated register."""
-        
+
         return self._register
 
     def __str__(self):
