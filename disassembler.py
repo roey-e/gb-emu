@@ -205,7 +205,7 @@ class Rule:
         """
 
         if not self.test(buffer):
-            raise RuleError(f'The rule {self} doesn\'t apply on \'{buffer.hex()}\'.')
+            raise RuleError(f'The rule {self} doesn\'t apply on \'{buffer.hex().capitalize()}\'.')
         return self.arg_name, self._transform(self.token.extract(buffer))
 
 
@@ -440,7 +440,8 @@ class Recipe:
                  enumerate(self.byte_recipes) if byte < len(buffer)]
 
         if len(buffer) < self.size and any(tests):
-            raise CutOffOpcodeError(f'The opcode \'{buffer.hex()}\' is cut as tested by {self}.')
+            raise CutOffOpcodeError(
+                f'The opcode \'{buffer.hex().capitalize()}\' is cut as tested by {self}.')
 
         return all(tests)
 
@@ -468,7 +469,8 @@ class Recipe:
                 args.update(byte_recipe.parse(buffer[byte:self.size]))
 
         if len(buffer) < self.size and args:
-            raise CutOffOpcodeError(f'The opcode \'{buffer.hex()}\' is cut as tested by {self}.')
+            raise CutOffOpcodeError(
+                f'The opcode \'{buffer.hex().capitalize()}\' is cut as tested by {self}.')
 
         return Instruction(self.format, args, self.size, self.duration)
 
@@ -500,7 +502,7 @@ class Disassembler:
             correct_recipe = next(recipe for recipe in self.cookbook if recipe.test(buffer))
         except StopIteration:
             raise DisassemblyError(
-                f'No recipe fits the opcode given in the buffer \'{buffer.hex()}\'.')
+                f'No recipe fits the opcode given in the buffer \'{buffer.hex().capitalize()}\'.')
         return correct_recipe.parse(buffer)
 
     def _whole_buffer_disassembly(self, buffer, address_offset=0):
